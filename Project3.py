@@ -212,29 +212,14 @@ def Ptf_Beta(Ptf, Benchmark):
 
     return stats.linregress(y,x)[0:2]
 
+# calculate portolio stats usings stocks individual weights and returns
 def portfolio_stats(weights, returns, rf):
-    
-    '''
-    We can gather the portfolio performance metrics for a specific set of weights.
-    This function will be important because we'll want to pass it to an optmization
-    function to get the portfolio with the best desired characteristics.
-    
-    Paramaters: 
-    -----------
-        weights: array, 
-            asset weights in the portfolio.
-        returns: dataframe
-            a dataframe of returns for each asset in the trial portfolio    
-    
-    Returns: 
-    --------
-        dict of portfolio statistics - mean return, volatility, sharp ratio.
-    '''
-
     # Convert to array in case list was passed instead.
     weights = np.array(weights)
+    # Annualize returns and volatility
     port_return = np.sum(returns.mean() * weights) * 252
     port_vol = np.sqrt(np.dot(weights.T, np.dot(returns.cov() * 252, weights)))
+    # Calculate the portfolio Sharpe Ratio
     sharpe = (port_return - rf) / port_vol
 
     return {'return': port_return, 'volatility': port_vol, 'sharpe': sharpe}
@@ -538,114 +523,30 @@ def main():
     NbAssets = 80
     Selector = 'Momentum' # Momentum # ThreeFactors # FiveFactors # SixFactors
     Allocation = 'Equally Weighted' # Equally Weighted  # Max Sharpe   # Min Volatility
-    MomentumPtf = BuildPTF(Cash,N, NbAssets, RebalancingN, df_Universe_EUR_PX, df_EUR_Dividends, df_Float_Market_Cap, 
+    Portfolio = BuildPTF(Cash,N, NbAssets, RebalancingN, df_Universe_EUR_PX, df_EUR_Dividends, df_Float_Market_Cap, 
                            df_Book_To_PX_ratio, df_Return_Com_Eqy, df_Asset_Growth, df_news, df_risk_free_Rate['1Y'], 
                            Selector, Allocation)
     
     plt.figure()
-    df_Momentum = df_CustomIndexes.copy()
-    df_Momentum = df_CustomIndexes.join(MomentumPtf['Index'])
-    df_Momentum = df_Momentum.rename(columns = {'Index':'Momentum'})
-    df_Momentum.plot()
+    df_Portfolio = df_CustomIndexes.copy()
+    df_Portfolio = df_CustomIndexes.join(Portfolio['Index'])
+    df_Portfolio = df_Portfolio.rename(columns = {'Index': Selector})
+    df_Portfolio.plot()
     #Display ptf Perf
-    print('The Portfolio return is : ',  round(MomentumPtf['Index'].iloc[-1]-100, 2), '%')
+    print('The Portfolio return is : ',  round(Portfolio['Index'].iloc[-1]-100, 2), '%')
     
     #calculate the portfolio Max Drawdown
-    MDD = MaxDD(MomentumPtf['Index'])
+    MDD = MaxDD(Portfolio['Index'])
     print('The Max Drawdown is : ',  round(MDD, 2), '%')
     
     #calculate the portfolio Sharpe Ratio
-    SR = SharpeRatio(MomentumPtf['Index'], df_risk_free_Rate.iloc[-1]['1Y'])
+    SR = SharpeRatio(Portfolio['Index'], df_risk_free_Rate.iloc[-1]['1Y'])
     print('The Sharpe Ratio is : ',  round(SR[0], 2))
     print('The Portfolio Volatility is : ',  round(SR[1], 2))
     
     #calculate the portfolio Beta
-    (beta, alpha) = Ptf_Beta(MomentumPtf['Index'], df_CustomIndexes['Price_Index'])
+    (beta, alpha) = Ptf_Beta(Portfolio['Index'], df_CustomIndexes['Price_Index'])
     print('The Portfolio beta is : ',  round(beta, 2))
-    
-    
-    RebalancingN = 0
-    N = 250
-    Cash = 1000000
-    NbAssets = 50
-    Selector = 'ThreeFactors'
-    Allocation = 'Min Volatility'
-    ThreeFactorsPtf = BuildPTF(Cash,N, NbAssets, RebalancingN, df_Universe_EUR_PX, df_EUR_Dividends, df_Float_Market_Cap, 
-                               df_Book_To_PX_ratio, df_Return_Com_Eqy, df_Asset_Growth, df_news, df_risk_free_Rate['1Y'], 
-                               Selector, Allocation)
-    plt.figure()
-    df_ThreeFactors = df_CustomIndexes.copy()
-    df_ThreeFactors = df_CustomIndexes.join(ThreeFactorsPtf['Index'])
-    df_ThreeFactors = df_ThreeFactors.rename(columns = {'Index':'3 Factors'})
-    df_ThreeFactors.plot()
-    #Display ptf Perf
-    print('The Portfolio return is : ', round(ThreeFactorsPtf['Index'].iloc[-1]-100, 2), '%')
-    
-    MDD = MaxDD(ThreeFactorsPtf['Index'])
-    print('The Max Drawdown is : ',  round(MDD, 2), '%')
-    
-    SR = SharpeRatio(ThreeFactorsPtf['Index'], df_risk_free_Rate.iloc[-1]['1Y'])
-    print('The Sharpe Ratio is : ',  round(SR, 2))
-    
-    (beta, alpha) = Ptf_Beta(ThreeFactorsPtf['Index'], df_CustomIndexes['Price_Index'])
-    print('The Portfolio beta is : ',  round(beta, 2))
-    print('The Portfolio alpha is : ',  round(alpha, 2))
-    
-    
-    RebalancingN = 0
-    N = 250
-    Cash = 1000000
-    NbAssets = 50
-    Selector = 'FiveFactors'
-    Allocation = 'Min Volatility'
-    FiveFactorsPtf = BuildPTF(Cash,N, NbAssets, RebalancingN, df_Universe_EUR_PX, df_EUR_Dividends, df_Float_Market_Cap, 
-                              df_Book_To_PX_ratio, df_Return_Com_Eqy, df_Asset_Growth, df_news, df_risk_free_Rate['1Y'], 
-                              Selector, Allocation)
-    plt.figure()
-    df_FiveFactors = df_CustomIndexes.copy()
-    df_FiveFactors = df_CustomIndexes.join(FiveFactorsPtf['Index'])
-    df_FiveFactors = df_FiveFactors.rename(columns = {'Index':'5 Factors'})
-    df_FiveFactors.plot()
-    #Display ptf Perf
-    print('The Portfolio return is : ', round(FiveFactorsPtf['Index'].iloc[-1]-100, 2), '%')
-    
-    MDD = MaxDD(FiveFactorsPtf['Index'])
-    print('The Max Drawdown is : ',  round(MDD, 2), '%')
-    
-    SR = SharpeRatio(FiveFactorsPtf['Index'], df_risk_free_Rate.iloc[-1]['1Y'])
-    print('The Sharpe Ratio is : ',  round(SR, 2))
-    
-    (beta, alpha) = Ptf_Beta(FiveFactorsPtf['Index'], df_CustomIndexes['Price_Index'])
-    print('The Portfolio beta is : ',  round(beta, 2))
-    print('The Portfolio alpha is : ',  round(alpha, 2))
-
-
-    RebalancingN = 0
-    N = 250
-    Cash = 1000000
-    NbAssets = 50
-    Selector = 'SixFactors'
-    Allocation = 'Min Volatility'
-    SixFactorsPtf = BuildPTF(Cash,N, NbAssets, RebalancingN, df_Universe_EUR_PX, df_EUR_Dividends, df_Float_Market_Cap, 
-                              df_Book_To_PX_ratio, df_Return_Com_Eqy, df_Asset_Growth, df_news, df_risk_free_Rate['1Y'], 
-                              Selector, Allocation)
-    plt.figure()
-    df_SixFactors = df_CustomIndexes.copy()
-    df_SixFactors = df_CustomIndexes.join(SixFactorsPtf['Index'])
-    df_SixFactors = df_SixFactors.rename(columns = {'Index':'6 Factors'})
-    df_SixFactors.plot()
-    #Display ptf Perf
-    print('The Portfolio return is : ', round(SixFactorsPtf['Index'].iloc[-1]-100, 2), '%')
-    
-    MDD = MaxDD(SixFactorsPtf['Index'])
-    print('The Max Drawdown is : ',  round(MDD, 2), '%')
-    
-    SR = SharpeRatio(SixFactorsPtf['Index'], df_risk_free_Rate.iloc[-1]['1Y'])
-    print('The Sharpe Ratio is : ',  round(SR, 2))
-    
-    (beta, alpha) = Ptf_Beta(SixFactorsPtf['Index'], df_CustomIndexes['Price_Index'])
-    print('The Portfolio beta is : ',  round(beta, 2))
-    print('The Portfolio alpha is : ',  round(alpha, 2))
 
 
 if __name__ == "__main__":
