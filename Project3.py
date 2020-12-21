@@ -6,19 +6,29 @@ import numpy as np
 from scipy import stats
 import scipy.optimize as optimize
 
-def BuildFundsIndex(df_ValueIndex, df_ValueFundsAuM, df_GrowthIndex, df_GrowthFundsAuM, df_BlendIndex, df_BlendFundsAuM, df_MsciIndexes):
+#Goal : use funds NAV and AuM to create indexes by morning star categories (Value, Blend and Growth) in order to compare 
+#                      Active funds results with the Benchmark (MSCI Europe Total Return) from 31/12/2018 to 30/06/2020
+#
+#Inputs : funds NAV and AuM dataframes by category, MSCI Total Return Gross Dividends historical value
+#Returns : dataframe with the indexes based to 100   
+def BuildFundsIndex(df_ValueIndex, df_ValueFundsAuM, df_GrowthIndex, df_GrowthFundsAuM, df_BlendIndex, 
+                    df_BlendFundsAuM, df_MsciIndexes):
+    #calculate funds weights by size
     df_ValueFundsWeights = df_ValueFundsAuM.div(df_ValueFundsAuM.sum(axis = 1), axis = 0)
-    
+    #get funds daily % change 
     df_ValueIndex = df_ValueIndex.pct_change()
+    #weighting funds performances
     df_ValueIndex = df_ValueIndex.mul(df_ValueFundsWeights, axis='columns')
+    #sum weighted daily returns to get the index index daily % change
     df_ValueIndex['Sum'] = df_ValueIndex.sum(axis = 1)
-
-    Index = []
-    Index.append(100)
     
+    Index = []
+    #append base 100
+    Index.append(100)
+    #calculate index value with the daily returns 
     for i in range(1,len(df_ValueIndex)):
         Index.append(Index[i - 1] * ( 1 + df_ValueIndex['Sum'][i]))
-    
+    #add the index to the dataframe
     df_ValueIndex['Value'] = Index
     del(df_ValueFundsWeights)
     del(df_ValueFundsAuM)
@@ -56,39 +66,55 @@ def BuildFundsIndex(df_ValueIndex, df_ValueFundsAuM, df_GrowthIndex, df_GrowthFu
     del(df_BlendFundsAuM)
     del(Index)
     
+    #rebase MSCI indexes to 100
+    df_MsciIndexes = 100*(df_MsciIndexes/ df_MsciIndexes.iloc[0, :])
+    #join all the indexes 
     df_Indexes = pd.concat([df_BlendIndex['Blend'], df_GrowthIndex['Growth'], df_ValueIndex['Value']], axis = 1)
     df_Indexes = df_Indexes.join(df_MsciIndexes)
     df_Indexes = df_Indexes.dropna()
-    df_Indexes = 100*(df_Indexes / df_Indexes.iloc[0, :])
     
     return(df_Indexes)
 
+#Goal : generate a Price Index with our stocks universe from the 31/12/2018 to 30/06/2020
+#Inputs : stocks closing prices in EUR
+#Returns : dataframe with Price Index base 100
 def PriceIndex(df_Universe_EUR_PX):
     df_PX = df_Universe_EUR_PX.copy()
+    #drop data prior to 31/12/2018
     df_PX = df_PX.loc['2018-12-31 00:00:00':,]   
-    
+    #sum stocks daily closing prices
     df_PX['Sum'] = df_PX.sum(axis = 1)
+    #calculate the index divisor needed to obtain a base 100
+    #we won't need to rebalance the divisor because the universe is not going to evolve
     IndexDivisor = df_PX.loc['2018-12-31 00:00:00', 'Sum']/100
     df_Index = pd.DataFrame(index=df_PX.index)
+    #divide the prices sum by the divisor to rebase it to 100
     df_Index['Price_Index'] = df_PX['Sum']/IndexDivisor
 
     return df_Index   
     
+#Goal : generate a Capital Weighted Index with our stocks universe from the 31/12/2018 to 30/06/2020
+#Inputs : stocks closing prices in EUR and the outstanding number of shares (total or floating)
+#Returns : dataframe with Capital Weighted Index base 100
 def CapiWeightedIndex(df_PX, df_Shares):
+    #drop data prior to 31/12/2018
     df_PX = df_PX.loc['2018-12-31 00:00:00':,]
     df_Shares = df_Shares.loc['2018-12-31 00:00:00':,]
-    
+    #calculate each company Market Capitalisation
     df_MarketCap = df_PX.mul(df_Shares, axis='columns')
-    """MarketCapShift will be used for the divisor calculation"""
+    #MarketCapShift will be used to rebalance the index divisor considering changes in the number of shares
+    #if the quantity of shares changes but not the prices we have to rebalance the divisor to avoid any change in the index value
     df_MarketCapShift = df_Shares.mul(df_PX.shift(1), axis='columns')
     df_MarketCap['Sum'] = df_MarketCap.sum(axis = 1)
     MarketCapSum = df_MarketCap['Sum'].to_numpy()
     df_MarketCapShift['Sum'] = df_MarketCapShift.sum(axis = 1)
     MarketCapShiftedSum = df_MarketCapShift['Sum'].to_numpy()
+    
     Index = []
     Divisor = []
     Index.append(100)
     Divisor.append(MarketCapSum[0]/Index[0])
+    #each day i, rebalance the divisor and calculate the index value 
     for i in range(1,len(df_MarketCap)):
         Divisor.append(MarketCapShiftedSum[i]/Index[i - 1])
         Index.append(MarketCapSum[i]/Divisor[i])
@@ -98,27 +124,33 @@ def CapiWeightedIndex(df_PX, df_Shares):
     
     return df_Index        
 
+#Goal : generate a Total Return Index with our stocks universe from the 31/12/2018 to 30/06/2020
+#Inputs : stocks closing prices in EUR, the dividends history in EUR
+#Returns : dataframe with Total Return Index base 100
 def TotalReturnIndex(df_Universe_EUR_PX, df_Dividends):
     df_PX = df_Universe_EUR_PX.copy()
     df_PX = df_PX.loc['2018-12-31 00:00:00':,]
     df_Dividends = df_Dividends.loc['2018-12-31 00:00:00':,]
-            
+    #calculate the Price Index
     df_PX['Sum'] = df_PX.sum(axis=1)
     IndexDivisor = df_PX.loc['2018-12-31 00:00:00', 'Sum']/100
     df_PriceIndex = pd.DataFrame(index=df_PX.index)
     df_PriceIndex['Price_Index'] = df_PX['Sum']/IndexDivisor
-
+    
     IndexLevel = df_PriceIndex['Price_Index'].to_numpy()
     df_TotalDiv = pd.DataFrame(df_Dividends,index=df_PriceIndex.index, columns=df_Dividends.columns)
     df_TotalDiv.fillna(0, inplace=True)
+    #divide the dividends by the divisor to convert them into index points 
     df_TotalDiv['Sum'] = df_TotalDiv.sum(axis=1)/IndexDivisor
     IndexDividend = df_TotalDiv['Sum'].to_numpy()
-
+    #Daily total return
     DTR = []
     DTR.append(100)
+    #Total return index
     TRI = []
     TRI.append(100)
     for i in range(1, len(IndexLevel)):
+        #update the index with the daily total return
         DTR.append(((IndexLevel[i] + IndexDividend[i])/IndexLevel[i-1])-1)
         TRI.append(TRI[i-1]*(1+DTR[i]))
         
@@ -127,25 +159,40 @@ def TotalReturnIndex(df_Universe_EUR_PX, df_Dividends):
     
     return df_Index
 
-def Momentum(df_perfSorted, NbAssets):
+#Goal : momentum stocks selection 
+#Inputs : stocks performances and the number of stocks needed
+#Returns : series with the N top performing stocks
+def Momentum(df_perfSorted, N):
+    #sort stocks by perf
     Selection = df_perfSorted.sort_values(axis=0, ascending = False, inplace=True)
-    Selection = df_perfSorted[0:NbAssets]
+    #Select the N top performers
+    Selection = df_perfSorted[0:N]
     return Selection
 
-def ThreeFactors(Perf, Size, Book_To_Price, NbAssets):
+#Goal : 3 factors stocks selection 
+#Inputs : stocks performances, market capitalisation, book to price ratio, and the number of stocks needed
+#Returns : series with the N top ranked stocks
+def ThreeFactors(Perf, Size, Book_To_Price, N):
+    #get the performance ranking
     Perf.sort_values(axis = 0, ascending = False, inplace=True)
     r1 = Perf.rank(ascending = False)
+    #rank stocks by size in ascending order (1 being the company with lowest market cap)
     Size.sort_values(axis = 0, ascending = True, inplace=True)
     r2 = Size.rank(ascending = True)
+    #rank stocks by book to price ratio (1 being the company with the highest ratio)
     Book_To_Price.sort_values(axis = 0, ascending = False, inplace=True)
     r3 = Book_To_Price.rank(ascending = False)
-    
+    #mean ranking with equal weights
     Selection = (r1 + r2 + r3)/3
     Selection.sort_values(axis = 0, ascending = True, inplace=True)
     
-    return Selection[0:NbAssets]
+    return Selection[0:N]
 
-def FiveFactors(Perf, Size, Book_To_Price, Return_Com_Eqy, Asset_Growth, NbAssets):
+#Goal : 5 factors stocks selection 
+#Inputs : stocks performances, market capitalisation, book to price ratio, return on common equity,
+#         asset growth and the number of stocks needed
+#Returns : series with the N top ranked stocks
+def FiveFactors(Perf, Size, Book_To_Price, Return_Com_Eqy, Asset_Growth, N):
     Perf.sort_values(axis = 0, ascending = False, inplace=True)
     r1 = Perf.rank(ascending = False)
     Size.sort_values(axis = 0, ascending = True, inplace=True)
@@ -154,15 +201,20 @@ def FiveFactors(Perf, Size, Book_To_Price, Return_Com_Eqy, Asset_Growth, NbAsset
     r3 = Book_To_Price.rank(ascending = False)
     Return_Com_Eqy.sort_values(axis = 0, ascending = False, inplace=True)
     r4 = Return_Com_Eqy.rank(ascending = False) 
+    #rank stocks by asset growth (1 being the company with the lowest Asset growth)
     Asset_Growth.sort_values(axis = 0, ascending = True, inplace=True)
     r5 = Asset_Growth.rank(ascending = True)
-    
+
     Selection = (r1 + r2 + r3 + r4 + r5)/5
     Selection.sort_values(axis = 0, ascending = True, inplace=True)
     
-    return Selection[0:NbAssets]
+    return Selection[0:N]
 
-def SixFactors(Perf, Size, Book_To_Price, Return_Com_Eqy, Asset_Growth, Sentiment_indicator, NbAssets):
+#Goal : 6 factors stocks selection 
+#Inputs : stocks performances, market capitalisation, book to price ratio, return on common equity,
+#         asset growth, sentiment indicator and the number of stocks needed
+#Returns : series with the N top ranked stocks
+def SixFactors(Perf, Size, Book_To_Price, Return_Com_Eqy, Asset_Growth, Sentiment_indicator, N):
     Perf.sort_values(axis = 0, ascending = False, inplace=True)
     r1 = Perf.rank(ascending = False)
     Size.sort_values(axis = 0, ascending = True, inplace=True)
@@ -173,37 +225,52 @@ def SixFactors(Perf, Size, Book_To_Price, Return_Com_Eqy, Asset_Growth, Sentimen
     r4 = Return_Com_Eqy.rank(ascending = False) 
     Asset_Growth.sort_values(axis = 0, ascending = True, inplace=True)
     r5 = Asset_Growth.rank(ascending = True)
+    #rank stock by sentiment (1 being the company with the highest number of positive news - negative news)
     Sentiment_indicator.sort_values(axis = 0, ascending = False, inplace=True)
     r6 = Sentiment_indicator.rank(ascending = False)
     
     Selection = (r1 + r2 + r3 + r4 + r5 + r6)/6
     Selection.sort_values(axis = 0, ascending = True, inplace=True)
-    return Selection[0:NbAssets]
+    return Selection[0:N]
 
-#calculate the portfolio sharpe ratio with annualized returns and volatility 
+#Goal : calculate the portfolio sharpe ratio with annualized returns and volatility
+#Inputs : portfolio daily value and risk free rates 
+#Returns : Portfolio Sharpe Ratio and annualized volatility in %
 def SharpeRatio(Ptf, rf):
+    #calculate the portfolio daily returns
     NAV = pd.DataFrame(Ptf)
     NAV['Daily Return'] = NAV.pct_change(1)
+    #calculate the portfolio expected return
     ExpectedReturn = NAV['Daily Return'].mean()
+    #annualize the expected return
     ExpectedReturn = ExpectedReturn * (252)
+    #calculate the portfolio volatility
     Volatility = NAV['Daily Return'].std() 
+    #annualize the volatility
     Volatility = Volatility * np.sqrt(252)
+    #calculate the Sharpe Ratio
     SR = (ExpectedReturn - rf) / Volatility
     
     return SR, Volatility*100
 
-#calculate the portfolio Max Drawdown
+#Goal : calculate the portfolio Max Drawdown
+#Inputs : portfolio daily value
+#Returns : Portfolio Max DrawDown
 def MaxDD(NAV):
     Peak = []
     Peak.append(100)
     DD = []
     for i in range(1,len(NAV)-1):
+        #get historical peak for day i
         Peak.append(NAV.iloc[0:i,].max())
+        #calculate day i drawdown
         DD.append((NAV.iloc[i]/Peak[i])-1)
          
     return min(min(DD),0)*100
 
-#calculate the portfolio Beta with the custom index
+#Goal : calculate the portfolio Beta
+#Inputs : portfolio and benchmark daily value
+#Returns : Portfolio Beta and Alpha
 def Ptf_Beta(Ptf, Benchmark):
     NAV = pd.DataFrame(Ptf)
     NAV['Bench'] = Benchmark
@@ -212,41 +279,57 @@ def Ptf_Beta(Ptf, Benchmark):
 
     return stats.linregress(y,x)[0:2]
 
-# calculate portolio stats usings stocks individual weights and returns
+#Goal : calculate a portfolio sharpe ratio for the allocatio optimizer
+#Inputs : portfolio stocks weights and return, the risk free rate
+#Returns : Portfolio return, volatility and sharpe ratio
 def portfolio_stats(weights, returns, rf):
-    # Convert to array in case list was passed instead.
     weights = np.array(weights)
-    # Annualize returns and volatility
     port_return = np.sum(returns.mean() * weights) * 252
     port_vol = np.sqrt(np.dot(weights.T, np.dot(returns.cov() * 252, weights)))
-    # Calculate the portfolio Sharpe Ratio
     sharpe = (port_return - rf) / port_vol
 
     return {'return': port_return, 'volatility': port_vol, 'sharpe': sharpe}
 
+#Goal : minimize negative sharpe ratio function for the allocation optimizer
+#Inputs : stocks weights and returns, risk free rate
+#Returns : portfolio sharpe ratio
 def minimize_sharpe(weights, returns, rf):  
     return -portfolio_stats(weights, returns, rf)['sharpe'] 
 
+#Goal : minimize portfolio volatility function for the allocation optimizer
+#Inputs : stocks weights and returns, risk free rate
+#Returns : portfolio volatility
 def minimize_volatility(weights, returns, rf):  
     return portfolio_stats(weights, returns, rf)['volatility']
 
-def max_sharp_optimization(NbAssets, stocks, returns, rf):
+#Goal : find the portfolio allocation in order to maximize Sharpe Ratio
+#Inputs : Portfolio number of assets, stocks weights and returns, risk free rate
+#Returns : optimized portfolio weights
+def max_sharpe_optimization(NbAssets, stocks, returns, rf):
+    #set a maximum weight for each stock depending of the number of assets
     Max_alloc = (100/NbAssets + (100/(2*NbAssets)))/100
+    #set a minimum weight for each stock depending of the number of assets
     Min_Alloc = (100/NbAssets - (100/(2*NbAssets)))/100
+    #set optimizer constraints with sum of stocks weights = 1
     constraints = ({'type' : 'eq', 'fun': lambda x: np.sum(x) -1})
     bounds = tuple((Min_Alloc,Max_alloc) for x in range(NbAssets))
+    #initialize stocks weights as equally weighted
     initializer = NbAssets * [1./NbAssets,]
+    #get the optimal portfolio by minimizing the negative sharpe ratio
     optimal_sharpe = optimize.minimize(minimize_sharpe,
                                  initializer,
                                  args = (returns, rf,),
                                  method = 'SLSQP',
                                  bounds = bounds,
                                  constraints = constraints)
-    
+    #extract stocks weights
     optimal_sharpe_weights=optimal_sharpe['x'].round(4)
-#    list(zip(stocks,list(optimal_sharpe_weights)))
+
     return optimal_sharpe_weights
 
+#Goal : find the portfolio allocation in order to minimize the portfolio volatility
+#Inputs : Portfolio number of assets, stocks weights and returns, risk free rate
+#Returns : optimized portfolio weights
 def min_vol_optimization(NbAssets, stocks, returns, rf):
     Max_alloc = (100/NbAssets + (100/(2*NbAssets)))/100
     Min_Alloc = (100/NbAssets - (100/(2*NbAssets)))/100
@@ -260,9 +343,9 @@ def min_vol_optimization(NbAssets, stocks, returns, rf):
                                    bounds = bounds,
                                    constraints = constraints)
 
-    #print(optimal_variance)
+
     optimal_variance_weights=optimal_variance['x'].round(4)
-#    list(zip(stocks,list(optimal_variance_weights))) 
+
     return optimal_variance_weights
 
 def BuildPTF(Cash, N, NbAssets, RebalancingN, df_Universe, df_Dividends, df_MktCap, df_Book_to_Price, df_Return_Com_Eqy, 
@@ -323,7 +406,7 @@ def BuildPTF(Cash, N, NbAssets, RebalancingN, df_Universe, df_Dividends, df_MktC
             if Allocation == 'Equally Weighted':
                 weights = np.full(NbAssets, 1/NbAssets)
             elif Allocation == 'Max Sharpe':
-                weights = max_sharp_optimization(NbAssets, Selection.index.values.tolist(), returns, rf)
+                weights = max_sharpe_optimization(NbAssets, Selection.index.values.tolist(), returns, rf)
             elif Allocation == 'Min Volatility':
                 weights = min_vol_optimization(NbAssets, Selection.index.values.tolist(), returns, rf)
             #join stocks names and weights
@@ -344,6 +427,7 @@ def BuildPTF(Cash, N, NbAssets, RebalancingN, df_Universe, df_Dividends, df_MktC
             
     df_strat = df_Shares.mul(df_Universe.loc['2018-12-31 00:00:00':,], axis='columns')
     df_strat["Index"] = df_strat.sum(axis=1)
+    #normalise portfolio values to 100
     df_strat["Index"] = 100*(df_strat["Index"] / df_strat["Index"].iloc[0])
     return df_strat
 
@@ -382,6 +466,8 @@ def main():
     #Load MSCI data to compare with the Funds index
     df_MsciIndexes = pd.read_excel(r'C:\Users\polla\OneDrive\Bureau\ESCP\Thèse\Harmonised_Data\TOT_RETURN_INDEX_GROSS_DVDS.xlsx', 
                                    index_col = 'Dates')
+    df_MsciIndexes.fillna(method='ffill', inplace=True)
+    df_MsciIndexes = df_MsciIndexes.loc['2018-12-31 00:00:00':,]
     
     #Load our stock universe closing prices
     df_Universe_PX = pd.read_excel(r'C:\Users\polla\OneDrive\Bureau\ESCP\Thèse\Harmonised_Data\PX_LAST.xlsx', 
@@ -513,16 +599,19 @@ def main():
     df_CustomIndexes.plot()
     
     
-    #set portoflio start parameters, RebalancingN is the rebalancing interval
-    #N is the performances interval used for the momentum 
+    #set portoflio start parameters
+    #RebalancingN is the rebalancing interval, 0 means no rebalancing
+    #N is the performances interval used for the momentum ranking
     #Cash is the initial portoflio seeding
     #NbAssets is the number of different assets the Ptf needs
-    RebalancingN = 189
+    RebalancingN = 126
     N = 252
     Cash = 1000000
     NbAssets = 80
-    Selector = 'Momentum' # Momentum # ThreeFactors # FiveFactors # SixFactors
-    Allocation = 'Equally Weighted' # Equally Weighted  # Max Sharpe   # Min Volatility
+    #set the stock picking strategy
+    Selector = 'SixFactors' # Momentum # ThreeFactors # FiveFactors # SixFactors
+    #set the allocation strategy
+    Allocation = 'Max Sharpe' # Equally Weighted  # Max Sharpe # Min Volatility
     Portfolio = BuildPTF(Cash,N, NbAssets, RebalancingN, df_Universe_EUR_PX, df_EUR_Dividends, df_Float_Market_Cap, 
                            df_Book_To_PX_ratio, df_Return_Com_Eqy, df_Asset_Growth, df_news, df_risk_free_Rate['1Y'], 
                            Selector, Allocation)
@@ -542,7 +631,7 @@ def main():
     #calculate the portfolio Sharpe Ratio
     SR = SharpeRatio(Portfolio['Index'], df_risk_free_Rate.iloc[-1]['1Y'])
     print('The Sharpe Ratio is : ',  round(SR[0], 2))
-    print('The Portfolio Volatility is : ',  round(SR[1], 2))
+    print('The Portfolio Volatility is : ',  round(SR[1], 2), '%')
     
     #calculate the portfolio Beta
     (beta, alpha) = Ptf_Beta(Portfolio['Index'], df_CustomIndexes['Price_Index'])
@@ -551,3 +640,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
